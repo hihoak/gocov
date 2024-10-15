@@ -31,7 +31,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/axw/gocov"
+	"github.com/hihoak/gocov"
 )
 
 const (

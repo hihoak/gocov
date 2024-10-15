@@ -1,4 +1,4 @@
-module github.com/axw/gocov
+module github.com/hihoak/gocov
 
 go 1.12
 

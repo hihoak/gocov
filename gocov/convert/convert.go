@@ -154,7 +154,6 @@ func (c *converter) convertProfile(p *cover.Profile, absFilePath, pkgPath string
 		for _, b := range blocks {
 			if b.StartLine > s.endLine || (b.StartLine == s.endLine && b.StartCol >= s.endCol) {
 				// Past the end of the statement
-				// blocks = blocks[i:]
 				break
 			}
 			if b.EndLine < s.startLine || (b.EndLine == s.startLine && b.EndCol <= s.startCol) {

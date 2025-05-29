@@ -151,18 +151,18 @@ func (c *converter) convertProfile(p *cover.Profile, absFilePath, pkgPath string
 	// covers and increment the Reached field(s).
 	blocks := p.Blocks
 	for _, s := range stmts {
-		for i, b := range blocks {
+		for _, b := range blocks {
 			if b.StartLine > s.endLine || (b.StartLine == s.endLine && b.StartCol >= s.endCol) {
 				// Past the end of the statement
-				blocks = blocks[i:]
+				// blocks = blocks[i:]
 				break
 			}
 			if b.EndLine < s.startLine || (b.EndLine == s.startLine && b.EndCol <= s.startCol) {
 				// Before the beginning of the statement
 				continue
 			}
+
 			s.Reached += int64(b.Count)
-			break
 		}
 	}
 
@@ -270,28 +270,69 @@ type StmtVisitor struct {
 	function *FuncExtent
 }
 
+func (v *StmtVisitor) collectExpr(node ast.Node) {
+	start, end := v.fset.Position(node.Pos()), v.fset.Position(node.End())
+	se := &StmtExtent{
+		startOffset: start.Offset,
+		startLine:   start.Line,
+		startCol:    start.Column,
+		endOffset:   end.Offset,
+		endLine:     end.Line,
+		endCol:      end.Column,
+	}
+	v.function.stmts = append(v.function.stmts, se)
+}
+
+func (v *StmtVisitor) collectToken(pos token.Pos, statement string) {
+	start, end := v.fset.Position(pos), v.fset.Position(pos+token.Pos(len(statement)))
+	se := &StmtExtent{
+		startOffset: start.Offset,
+		startLine:   start.Line,
+		startCol:    start.Column,
+		endOffset:   end.Offset,
+		endLine:     end.Line,
+		endCol:      end.Column,
+	}
+	v.function.stmts = append(v.function.stmts, se)
+}
+
 func (v *StmtVisitor) VisitStmt(s ast.Stmt) {
-	var statements *[]ast.Stmt
 	switch s := s.(type) {
+
+	case *ast.DeclStmt:
+		v.collectExpr(s.Decl)
+	case *ast.EmptyStmt:
+		// nothing to do
+	case *ast.LabeledStmt:
+		v.VisitStmt(s.Stmt)
+	case *ast.ExprStmt:
+		v.collectExpr(s.X)
+	case *ast.SendStmt:
+		v.collectExpr(s.Chan)
+	case *ast.IncDecStmt:
+		v.collectExpr(s.X)
+	case *ast.AssignStmt:
+		v.collectToken(s.TokPos, "=")
+	case *ast.GoStmt:
+		v.collectToken(s.Go, "go")
+	case *ast.DeferStmt:
+		v.collectToken(s.Defer, "defer")
+	case *ast.ReturnStmt:
+		v.collectToken(s.Return, "return")
+	case *ast.BranchStmt:
+		v.collectToken(s.TokPos, "g")
 	case *ast.BlockStmt:
-		statements = &s.List
-	case *ast.CaseClause:
-		statements = &s.Body
-	case *ast.CommClause:
-		statements = &s.Body
-	case *ast.ForStmt:
-		if s.Init != nil {
-			v.VisitStmt(s.Init)
+		for _, stmt := range s.List {
+			v.VisitStmt(stmt)
 		}
-		if s.Post != nil {
-			v.VisitStmt(s.Post)
-		}
-		v.VisitStmt(s.Body)
 	case *ast.IfStmt:
 		if s.Init != nil {
 			v.VisitStmt(s.Init)
+		} else if s.Cond != nil {
+			v.collectExpr(s.Cond)
 		}
 		v.VisitStmt(s.Body)
+
 		if s.Else != nil {
 			// Code copied from go.tools/cmd/cover, to deal with "if x {} else if y {}"
 			const backupToElse = token.Pos(len("else ")) // The AST doesn't remember the else location. We can make an accurate guess.
@@ -310,34 +351,25 @@ func (v *StmtVisitor) VisitStmt(s ast.Stmt) {
 			}
 			v.VisitStmt(s.Else)
 		}
-	case *ast.LabeledStmt:
-		v.VisitStmt(s.Stmt)
-	case *ast.RangeStmt:
-		v.VisitStmt(s.Body)
-	case *ast.SelectStmt:
-		v.VisitStmt(s.Body)
+
+	case *ast.CaseClause:
+		for _, stmt := range s.Body {
+			v.VisitStmt(stmt)
+		}
 	case *ast.SwitchStmt:
 		if s.Init != nil {
-			v.VisitStmt(s.Init)
+			v.VisitStmt(s.Body)
+		} else {
+			v.collectToken(s.Switch, "switch")
 		}
 		v.VisitStmt(s.Body)
 	case *ast.TypeSwitchStmt:
 		if s.Init != nil {
 			v.VisitStmt(s.Init)
-		}
-		v.VisitStmt(s.Assign)
-		v.VisitStmt(s.Body)
-	}
-	if statements == nil {
-		return
-	}
-	for i := 0; i < len(*statements); i++ {
-		s := (*statements)[i]
-		switch s.(type) {
-		case *ast.CaseClause, *ast.CommClause, *ast.BlockStmt:
-			break
-		default:
-			start, end := v.fset.Position(s.Pos()), v.fset.Position(s.End())
+		} else if s.Assign != nil {
+			v.VisitStmt(s.Assign)
+		} else {
+			start, end := v.fset.Position(s.Switch), v.fset.Position(s.Switch+token.Pos(len("switch")))
 			se := &StmtExtent{
 				startOffset: start.Offset,
 				startLine:   start.Line,
@@ -348,6 +380,54 @@ func (v *StmtVisitor) VisitStmt(s ast.Stmt) {
 			}
 			v.function.stmts = append(v.function.stmts, se)
 		}
-		v.VisitStmt(s)
+		v.VisitStmt(s.Body)
+	case *ast.CommClause:
+		for _, stmt := range s.Body {
+			v.VisitStmt(stmt)
+		}
+	case *ast.SelectStmt:
+		start, end := v.fset.Position(s.Select), v.fset.Position(s.Select+token.Pos(len("select")))
+		se := &StmtExtent{
+			startOffset: start.Offset,
+			startLine:   start.Line,
+			startCol:    start.Column,
+			endOffset:   end.Offset,
+			endLine:     end.Line,
+			endCol:      end.Column,
+		}
+		v.function.stmts = append(v.function.stmts, se)
+		v.VisitStmt(s.Body)
+	case *ast.ForStmt:
+		if s.Init != nil {
+			v.VisitStmt(s.Init)
+		} else if s.Cond != nil {
+			start, end := v.fset.Position(s.Cond.Pos()), v.fset.Position(s.Cond.End())
+			se := &StmtExtent{
+				startOffset: start.Offset,
+				startLine:   start.Line,
+				startCol:    start.Column,
+				endOffset:   end.Offset,
+				endLine:     end.Line,
+				endCol:      end.Column,
+			}
+			v.function.stmts = append(v.function.stmts, se)
+		} else if s.Post != nil {
+			v.VisitStmt(s.Post)
+		} else {
+			v.collectToken(s.For, "for")
+		}
+		v.VisitStmt(s.Body)
+	case *ast.RangeStmt:
+		start, end := v.fset.Position(s.X.Pos()), v.fset.Position(s.X.End())
+		se := &StmtExtent{
+			startOffset: start.Offset,
+			startLine:   start.Line,
+			startCol:    start.Column,
+			endOffset:   end.Offset,
+			endLine:     end.Line,
+			endCol:      end.Column,
+		}
+		v.function.stmts = append(v.function.stmts, se)
+		v.VisitStmt(s.Body)
 	}
 }

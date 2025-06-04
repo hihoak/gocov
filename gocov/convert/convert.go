@@ -319,6 +319,9 @@ func (v *StmtVisitor) VisitStmt(s ast.Stmt) {
 	case *ast.ReturnStmt:
 		v.collectToken(s.Return, "return")
 	case *ast.BranchStmt:
+		if s.Label != nil {
+			v.collectExpr(s.Label)
+		}
 		v.collectToken(s.TokPos, "g")
 	case *ast.BlockStmt:
 		for _, stmt := range s.List {

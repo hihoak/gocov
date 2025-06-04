@@ -357,7 +357,7 @@ func (v *StmtVisitor) VisitStmt(s ast.Stmt) {
 		}
 	case *ast.SwitchStmt:
 		if s.Init != nil {
-			v.VisitStmt(s.Body)
+			v.VisitStmt(s.Init)
 		} else {
 			v.collectToken(s.Switch, "switch")
 		}
